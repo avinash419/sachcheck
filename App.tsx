@@ -52,19 +52,31 @@ const App: React.FC = () => {
     transcriptionRef.current = '';
   }, []);
 
+  const openKeySelection = async () => {
+    // @ts-ignore
+    if (window.aistudio) {
+      // @ts-ignore
+      await window.aistudio.openSelectKey();
+    }
+  };
+
   const startRecording = async () => {
     if (isRecording) return;
     setErrorMsg(null);
     transcriptionRef.current = '';
     
+    // Check if key is available
     // @ts-ignore
     if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
-      // @ts-ignore
-      window.aistudio.openSelectKey();
+      await openKeySelection();
     }
 
     const apiKey = process.env.API_KEY;
-    if (!apiKey) { setErrorMsg("API Key required for voice features."); return; }
+    if (!apiKey) { 
+      setErrorMsg("Please select an API Key using the button below."); 
+      await openKeySelection();
+      return; 
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -147,9 +159,15 @@ const App: React.FC = () => {
         result,
         timestamp: new Date()
       }]);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Fact check error:", error);
-      setErrorMsg("Verification failed. Please try again.");
+      if (error.message === "AUTH_REQUIRED") {
+        setErrorMsg("Authentication failed. Please select a valid API Key.");
+        await openKeySelection();
+      } else {
+        setErrorMsg("Verification failed. Please check your network or try a different claim.");
+      }
+      // Remove the failed message or keep it? Let's keep it but show error.
     } finally {
       setIsTyping(false);
     }
@@ -207,11 +225,14 @@ const App: React.FC = () => {
               </div>
               <span>सत्यापन केंद्र</span>
             </button>
-            <button className="flex items-center gap-4 w-full p-4 hover:bg-white/5 rounded-2xl text-left text-slate-500 font-bold transition-all group">
+            <button 
+              onClick={openKeySelection}
+              className="flex items-center gap-4 w-full p-4 hover:bg-white/5 rounded-2xl text-left text-slate-500 font-bold transition-all group"
+            >
               <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A10.003 10.003 0 0012 21a10.003 10.003 0 008.384-4.51m-11.163-1.258l-.053.089a9.993 9.993 0 01-2.128-2.618m4.933-9.584a9.992 9.992 0 013.973 1.134" /></svg>
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
               </div>
-              <span>इतिहास</span>
+              <span>API Key</span>
             </button>
           </nav>
         </div>

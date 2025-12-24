@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type, Modality, Blob } from "@google/genai";
-import { Language, FactCheckResult, Verdict } from "../types";
+import { Language, FactCheckResult, Verdict } from "../types.ts";
 
 // Simple in-memory cache for speed
 const resultCache = new Map<string, FactCheckResult>();
@@ -15,8 +15,13 @@ export const checkFact = async (
     return resultCache.get(cacheKey)!;
   }
 
-  // Directly using process.env.API_KEY as per coding guidelines
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey === "") {
+    throw new Error("AUTH_REQUIRED");
+  }
+
+  // Create instance right before call to use the most up-to-date key
+  const ai = new GoogleGenAI({ apiKey });
   
   const systemInstruction = `
     Professional fact-checker for Indian context. 
@@ -43,37 +48,41 @@ export const checkFact = async (
     });
   }
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: { parts: contents },
-    config: {
-      systemInstruction,
-      tools: [{ googleSearch: {} }],
-      responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          verdict: { type: Type.STRING },
-          explanation: { type: Type.STRING },
-          sources: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                uri: { type: Type.STRING }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: { parts: contents },
+      config: {
+        systemInstruction,
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            verdict: { type: Type.STRING },
+            explanation: { type: Type.STRING },
+            sources: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  uri: { type: Type.STRING }
+                }
               }
             }
-          }
-        },
-        required: ["verdict", "explanation"]
+          },
+          required: ["verdict", "explanation"]
+        }
       }
-    }
-  });
+    });
 
-  try {
-    const result = JSON.parse(response.text || '{}');
+    if (!response.text) {
+      throw new Error("EMPTY_RESPONSE");
+    }
+
+    const result = JSON.parse(response.text);
     const searchSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map(chunk => ({
       title: chunk.web?.title || 'Source',
       uri: chunk.web?.uri || '#'
@@ -87,29 +96,42 @@ export const checkFact = async (
 
     resultCache.set(cacheKey, finalResult);
     return finalResult;
-  } catch (e) {
-    console.error("Fact check parse error", e);
-    return { verdict: 'Unverified', explanation: 'Error processing claim.', sources: [] };
+  } catch (error: any) {
+    console.error("Gemini API Error:", error);
+    
+    // Check for specific error that requires key re-selection
+    if (error.message?.includes("Requested entity was not found") || 
+        error.message?.includes("API key not valid") ||
+        error.status === 404 || error.status === 401) {
+      throw new Error("AUTH_REQUIRED");
+    }
+    
+    throw error;
   }
 };
 
 export const generateSpeech = async (text: string): Promise<string> => {
-  // Directly using process.env.API_KEY as per coding guidelines
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) return '';
+  
+  const ai = new GoogleGenAI({ apiKey });
   const cleanText = text.replace(/\*\*/g, '').replace(/•/g, '');
   
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text: `Read: ${cleanText}` }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text: `Read: ${cleanText}` }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+        },
       },
-    },
-  });
-
-  return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '';
+    });
+    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '';
+  } catch (e) {
+    return '';
+  }
 };
 
 export const decodeAudio = (base64: string): Uint8Array => {
@@ -148,7 +170,6 @@ export async function decodeAudioToBuffer(
   sampleRate: number = 24000,
   numChannels: number = 1,
 ): Promise<AudioBuffer> {
-  // Use byteOffset and byteLength explicitly to avoid unaligned buffer errors
   const dataInt16 = new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2);
   const frameCount = dataInt16.length / numChannels;
   const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
