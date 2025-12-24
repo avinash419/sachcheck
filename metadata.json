@@ -1,0 +1,8 @@
+{
+  "name": "SachCheck Web",
+  "description": "An AI-powered fact-checker for Indian political news and social media claims, featuring Hindi-first explanations and Google Search grounding.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

@@ -1,0 +1,394 @@
+
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { GoogleGenAI, Modality, LiveServerMessage } from '@google/genai';
+import { Language, Message, FactCheckResult } from './types';
+import { UI_STRINGS } from './constants';
+import { checkFact, createAudioBlob } from './services/geminiService';
+import VerdictCard from './components/VerdictCard';
+
+const App: React.FC = () => {
+  const [language, setLanguage] = useState<Language>(Language.HINDI);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const liveSessionRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scriptNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const transcriptionRef = useRef<string>('');
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isTyping, scrollToBottom]);
+
+  useEffect(() => {
+    setMessages([{
+      id: 'welcome',
+      role: 'assistant',
+      content: UI_STRINGS.welcomeMsg[language],
+      timestamp: new Date()
+    }]);
+  }, [language]);
+
+  const stopRecording = useCallback(() => {
+    if (scriptNodeRef.current) { scriptNodeRef.current.disconnect(); scriptNodeRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (audioContextRef.current) { audioContextRef.current.close().catch(() => {}); audioContextRef.current = null; }
+    if (liveSessionRef.current) {
+      liveSessionRef.current.then((s: any) => { try { s.close(); } catch(e) {} }).catch(() => {});
+      liveSessionRef.current = null;
+    }
+    setIsRecording(false);
+    transcriptionRef.current = '';
+  }, []);
+
+  const startRecording = async () => {
+    if (isRecording) return;
+    setErrorMsg(null);
+    transcriptionRef.current = '';
+    
+    // API Key selection handling for Veo/Flash Native Audio
+    if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
+      window.aistudio.openSelectKey();
+      // Proceed assuming the user will select a key as per race condition guidelines
+    }
+
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) { setErrorMsg("API Key required for voice features."); return; }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+      const ai = new GoogleGenAI({ apiKey });
+      
+      const sessionPromise = ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        callbacks: {
+          onopen: () => {
+            setIsRecording(true);
+            const source = audioContext.createMediaStreamSource(stream);
+            const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+            scriptNodeRef.current = scriptProcessor;
+            scriptProcessor.onaudioprocess = (e) => {
+              const pcmBlob = createAudioBlob(e.inputBuffer.getChannelData(0));
+              sessionPromise.then(s => s.sendRealtimeInput({ media: pcmBlob })).catch(stopRecording);
+            };
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+          },
+          onmessage: (m: LiveServerMessage) => {
+            // Handle user audio transcription
+            if (m.serverContent?.inputTranscription?.text) {
+              const newText = m.serverContent.inputTranscription.text;
+              // Update input value in real-time
+              setInputValue(prev => {
+                // If the turn is growing, we append.
+                // Note: Native audio transcription chunks are usually additive in a turn.
+                return (transcriptionRef.current + " " + newText).trim();
+              });
+              transcriptionRef.current += " " + newText;
+            }
+            
+            // If the model decides to speak (e.g. "I'm listening"), we handle that if needed,
+            // but for this implementation we just want the transcription.
+          },
+          onerror: (e) => { 
+            console.error("Live session error", e);
+            setErrorMsg("Voice connection failed. Check your network."); 
+            stopRecording(); 
+          },
+          onclose: () => setIsRecording(false),
+        },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          systemInstruction: `You are a voice-to-text transcriber for a fact-checking app. Listen to the user in ${language} and provide high-accuracy transcription of their claim about Indian news or Kisan issues. Do not talk back unless necessary.`
+        },
+      });
+      liveSessionRef.current = sessionPromise;
+    } catch (err) { 
+      console.error("Mic access failed", err);
+      setErrorMsg("Could not access microphone. Please check permissions."); 
+      stopRecording(); 
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (isRecording) stopRecording();
+    
+    const text = inputValue.trim();
+    if (!text && !selectedImage) return;
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text,
+      image: selectedImage || undefined,
+      timestamp: new Date()
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setInputValue('');
+    setSelectedImage(null);
+    setIsTyping(true);
+    setErrorMsg(null);
+
+    try {
+      const result = await checkFact(text || 'Image analysis', language, selectedImage || undefined);
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+        result,
+        timestamp: new Date()
+      }]);
+    } catch (error) {
+      console.error("Fact check error:", error);
+      setErrorMsg("Verification failed. Please try again.");
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => setSelectedImage(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const renderedMessages = useMemo(() => messages.map((msg) => (
+    <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+      <div className={`w-full ${msg.role === 'user' ? 'max-w-[85%] md:max-w-[70%]' : ''}`}>
+        {msg.role === 'user' ? (
+          <div className="bg-[#0a0a1a] text-white rounded-3xl p-6 rounded-tr-none shadow-2xl ml-auto border border-white/10">
+            {msg.image && <img src={msg.image} className="rounded-2xl mb-4 max-h-72 object-contain w-full bg-black/20" alt="User upload" />}
+            {msg.content && <p className="text-lg leading-relaxed font-medium">{msg.content}</p>}
+          </div>
+        ) : (
+          <div className="w-full">
+            {msg.content && (
+              <div className="bg-white border border-slate-100 rounded-3xl p-6 rounded-tl-none shadow-sm mb-6 max-w-[85%] md:max-w-[70%] text-slate-700 font-medium text-lg border-l-4 border-l-blue-500">
+                {msg.content}
+              </div>
+            )}
+            {msg.result && <VerdictCard result={msg.result} language={language} />}
+          </div>
+        )}
+        <div className={`text-[10px] mt-3 font-black text-slate-300 uppercase tracking-[0.2em] ${msg.role === 'user' ? 'text-right mr-2' : 'text-left ml-2'}`}>
+          {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </div>
+      </div>
+    </div>
+  )), [messages, language]);
+
+  return (
+    <div className="flex h-screen bg-[#f8fafc] overflow-hidden">
+      {/* Sidebar - Desktop Only */}
+      <aside className="hidden md:flex flex-col w-72 bg-[#0a0a1a] text-white p-8 justify-between border-r border-white/5 shadow-2xl z-20">
+        <div className="space-y-10">
+          <div className="flex items-center gap-4 group cursor-pointer">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg shadow-blue-500/20 group-hover:scale-110 transition-transform">S</div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tighter leading-none">{UI_STRINGS.appName[language]}</h1>
+              <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest opacity-60">SachCheck Hub</span>
+            </div>
+          </div>
+          <nav className="space-y-2">
+            <button className="flex items-center gap-4 w-full p-4 bg-white/10 rounded-2xl text-left border border-white/5 shadow-xl font-bold transition-all hover:bg-white/15">
+              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+              </div>
+              <span>सत्यापन केंद्र</span>
+            </button>
+            <button className="flex items-center gap-4 w-full p-4 hover:bg-white/5 rounded-2xl text-left text-slate-500 font-bold transition-all group">
+              <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A10.003 10.003 0 0012 21a10.003 10.003 0 008.384-4.51m-11.163-1.258l-.053.089a9.993 9.993 0 01-2.128-2.618m4.933-9.584a9.992 9.992 0 013.973 1.134" /></svg>
+              </div>
+              <span>इतिहास</span>
+            </button>
+          </nav>
+        </div>
+        <div className="space-y-6">
+          <div className="bg-gradient-to-br from-blue-600/10 to-indigo-600/10 p-6 rounded-3xl border border-blue-500/20 backdrop-blur-sm">
+            <div className="text-3xl font-black text-blue-400 tracking-tighter">99.9%</div>
+            <div className="text-[10px] text-blue-200/40 uppercase font-black tracking-[0.2em] mt-1">{UI_STRINGS.accuracyLabel[language]}</div>
+          </div>
+          <div className="flex items-center gap-3 px-2 py-1 text-[11px] text-emerald-400 font-black uppercase tracking-[0.25em]">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]"></span>
+            </span>
+            {UI_STRINGS.activeLabel[language]}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col relative overflow-hidden bg-white">
+        <header className="px-8 py-5 flex items-center justify-between border-b border-slate-50 bg-white/80 backdrop-blur-xl z-10">
+          <div className="md:hidden flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-lg shadow-blue-500/10">S</div>
+            <span className="font-black text-slate-900 tracking-tighter text-xl">{UI_STRINGS.appName[language]}</span>
+          </div>
+          <div className="hidden md:flex flex-col">
+            <h2 className="text-xl font-black text-slate-900 tracking-tighter">{UI_STRINGS.tagline[language]}</h2>
+            <div className="flex items-center gap-2 uppercase font-black text-[10px] tracking-[0.3em]">
+              <span className="text-blue-600">NATIVE-MODALITY</span>
+              <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
+              <span className="text-slate-400">SESSION v5.0</span>
+            </div>
+          </div>
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl shadow-inner border border-slate-200/50">
+            {Object.values(Language).map((lang) => (
+              <button 
+                key={lang} 
+                onClick={() => setLanguage(lang)} 
+                className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 ${language === lang ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {lang}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-6 py-8 md:px-12 md:py-10 bg-[#fcfdfe] scroll-smooth">
+          <div className="max-w-4xl mx-auto w-full space-y-12">
+            {renderedMessages}
+            {isTyping && (
+              <div className="flex justify-start">
+                <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-xl flex items-center gap-4 animate-pulse">
+                  <div className="flex gap-2">
+                    <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce"></span>
+                    <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.2s]"></span>
+                    <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                  </div>
+                  <span className="text-xs font-black text-slate-400 uppercase tracking-widest">सत्यापन जारी है...</span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} className="h-4" />
+          </div>
+        </div>
+
+        {errorMsg && (
+          <div className="mx-8 md:mx-12 mb-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 shadow-sm">
+            <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <span>{errorMsg}</span>
+            <button onClick={() => setErrorMsg(null)} className="ml-auto p-2 hover:bg-rose-100 rounded-lg transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg></button>
+          </div>
+        )}
+
+        {/* Floating Input Area */}
+        <footer className="p-6 md:p-12 pt-0 z-10">
+          <div className="max-w-4xl mx-auto relative">
+            {isRecording && (
+              <div className="absolute -top-20 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-[#0a0a1a] text-white px-8 py-4 rounded-full shadow-2xl animate-in zoom-in-95 duration-300 border border-white/10">
+                <div className="flex items-end gap-1 h-6">
+                  {[...Array(5)].map((_, i) => (
+                    <div key={i} className={`w-1.5 bg-blue-400 rounded-full animate-voice-bar`} style={{animationDelay: `${i * 0.1}s`, height: `${30 + Math.random() * 70}%`}}></div>
+                  ))}
+                </div>
+                <span className="font-black uppercase text-xs tracking-widest text-blue-400 animate-pulse">बोलिए, हम सुन रहे हैं...</span>
+                <button onClick={stopRecording} className="ml-2 p-1.5 bg-white/10 hover:bg-rose-500 rounded-full transition-colors">
+                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            )}
+
+            {selectedImage && (
+              <div className="absolute bottom-full mb-8 left-0 p-3 bg-white rounded-[2rem] shadow-2xl border border-slate-100 animate-in slide-in-from-bottom-4 duration-300 ring-8 ring-slate-50">
+                <div className="relative group">
+                  <img src={selectedImage} className="w-32 h-32 object-cover rounded-2xl" alt="Preview" />
+                  <button 
+                    onClick={() => setSelectedImage(null)} 
+                    className="absolute -top-3 -right-3 bg-rose-600 text-white rounded-full p-2 shadow-xl hover:bg-rose-700 transition-colors border-2 border-white"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={3}><path d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className={`bg-white rounded-[2.5rem] shadow-2xl border ${isRecording ? 'border-blue-400 ring-8 ring-blue-50' : 'border-slate-100 focus-within:border-blue-200 focus-within:ring-8 focus-within:ring-slate-50'} p-3 flex items-center gap-2 transition-all duration-500 group`}>
+              <button 
+                onClick={() => fileInputRef.current?.click()} 
+                className="p-5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
+                title="Upload Photo"
+              >
+                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </button>
+              
+              <input 
+                type="text" 
+                value={inputValue} 
+                onChange={(e) => setInputValue(e.target.value)} 
+                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} 
+                placeholder={isRecording ? "Listening to your voice..." : UI_STRINGS.placeholder[language]} 
+                className="flex-1 py-4 text-xl text-slate-900 placeholder-slate-300 bg-transparent outline-none font-bold tracking-tight px-2" 
+              />
+              
+              <div className="flex items-center gap-2 pr-2">
+                <button 
+                  onClick={isRecording ? stopRecording : startRecording} 
+                  className={`p-5 rounded-full transition-all duration-500 ${isRecording ? 'bg-rose-500 text-white shadow-lg shadow-rose-200 scale-110' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                  title="Speak to Transcribe"
+                >
+                  {isRecording ? (
+                    <div className="flex items-center justify-center w-7 h-7">
+                       <span className="w-3 h-3 bg-white rounded-sm animate-pulse"></span>
+                    </div>
+                  ) : (
+                    <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                  )}
+                </button>
+                
+                <button 
+                  onClick={handleSendMessage} 
+                  disabled={isTyping || (!inputValue.trim() && !selectedImage)} 
+                  className={`px-10 py-5 rounded-full font-black uppercase text-sm tracking-[0.2em] transition-all duration-300 flex items-center gap-3 ${isTyping || (!inputValue.trim() && !selectedImage) ? 'bg-slate-100 text-slate-300 scale-95' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-xl shadow-blue-500/30 hover:shadow-2xl hover:scale-105 active:scale-95 active:shadow-inner'}`}
+                >
+                  {UI_STRINGS.checkButton[language]}
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                </button>
+              </div>
+            </div>
+            <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+          </div>
+        </footer>
+      </main>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes voice-bar {
+          0%, 100% { height: 30%; }
+          50% { height: 100%; }
+        }
+        .animate-voice-bar {
+          animation: voice-bar 0.5s ease-in-out infinite;
+        }
+      `}} />
+    </div>
+  );
+};
+
+export default App;
