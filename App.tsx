@@ -1,10 +1,10 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { GoogleGenAI, Modality, LiveServerMessage } from '@google/genai';
-import { Language, Message, FactCheckResult } from './types';
-import { UI_STRINGS } from './constants';
-import { checkFact, createAudioBlob } from './services/geminiService';
-import VerdictCard from './components/VerdictCard';
+import { Language, Message, FactCheckResult } from './types.ts';
+import { UI_STRINGS } from './constants.ts';
+import { checkFact, createAudioBlob } from './services/geminiService.ts';
+import VerdictCard from './components/VerdictCard.tsx';
 
 const App: React.FC = () => {
   const [language, setLanguage] = useState<Language>(Language.HINDI);
@@ -57,10 +57,10 @@ const App: React.FC = () => {
     setErrorMsg(null);
     transcriptionRef.current = '';
     
-    // API Key selection handling for Veo/Flash Native Audio
+    // @ts-ignore
     if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
+      // @ts-ignore
       window.aistudio.openSelectKey();
-      // Proceed assuming the user will select a key as per race condition guidelines
     }
 
     const apiKey = process.env.API_KEY;
@@ -89,20 +89,13 @@ const App: React.FC = () => {
             scriptProcessor.connect(audioContext.destination);
           },
           onmessage: (m: LiveServerMessage) => {
-            // Handle user audio transcription
             if (m.serverContent?.inputTranscription?.text) {
               const newText = m.serverContent.inputTranscription.text;
-              // Update input value in real-time
               setInputValue(prev => {
-                // If the turn is growing, we append.
-                // Note: Native audio transcription chunks are usually additive in a turn.
                 return (transcriptionRef.current + " " + newText).trim();
               });
               transcriptionRef.current += " " + newText;
             }
-            
-            // If the model decides to speak (e.g. "I'm listening"), we handle that if needed,
-            // but for this implementation we just want the transcription.
           },
           onerror: (e) => { 
             console.error("Live session error", e);
@@ -198,7 +191,6 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-[#f8fafc] overflow-hidden">
-      {/* Sidebar - Desktop Only */}
       <aside className="hidden md:flex flex-col w-72 bg-[#0a0a1a] text-white p-8 justify-between border-r border-white/5 shadow-2xl z-20">
         <div className="space-y-10">
           <div className="flex items-center gap-4 group cursor-pointer">
@@ -238,7 +230,6 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white">
         <header className="px-8 py-5 flex items-center justify-between border-b border-slate-50 bg-white/80 backdrop-blur-xl z-10">
           <div className="md:hidden flex items-center gap-3">
@@ -295,7 +286,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Floating Input Area */}
         <footer className="p-6 md:p-12 pt-0 z-10">
           <div className="max-w-4xl mx-auto relative">
             {isRecording && (
