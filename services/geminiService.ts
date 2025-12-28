@@ -15,11 +15,7 @@ export const checkFact = async (
     return resultCache.get(cacheKey)!;
   }
 
-  const apiKey = process.env.API_KEY;
-  if (!apiKey || apiKey === "") {
-    throw new Error("API Key is missing from the environment.");
-  }
-
+  const apiKey = process.env.API_KEY || "";
   const ai = new GoogleGenAI({ apiKey });
   
   const systemInstruction = `
@@ -104,9 +100,7 @@ export const checkFact = async (
 };
 
 export const generateSpeech = async (text: string): Promise<string> => {
-  const apiKey = process.env.API_KEY;
-  if (!apiKey) return '';
-  
+  const apiKey = process.env.API_KEY || "";
   const ai = new GoogleGenAI({ apiKey });
   const cleanText = text.replace(/\*\*/g, '').replace(/•/g, '');
   
