@@ -56,5 +56,10 @@ export const UI_STRINGS: TranslationMap = {
     [Language.HINDI]: 'सक्रिय',
     [Language.ENGLISH]: 'Active',
     [Language.BHOJPURI]: 'चालू',
+  },
+  uruwaBazar: {
+    [Language.HINDI]: 'आज की उरुवा न्यूज़',
+    [Language.ENGLISH]: 'Uruwa Bazar Daily',
+    [Language.BHOJPURI]: 'आज के उरुवा समाचार',
   }
 };

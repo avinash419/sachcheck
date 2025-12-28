@@ -17,16 +17,17 @@ export const checkFact = async (
 
   const apiKey = process.env.API_KEY;
   if (!apiKey || apiKey === "") {
-    throw new Error("AUTH_REQUIRED");
+    throw new Error("API Key is missing from the environment.");
   }
 
-  // Create instance right before call to use the most up-to-date key
   const ai = new GoogleGenAI({ apiKey });
   
   const systemInstruction = `
     Professional fact-checker for Indian context. 
-    Context: Indian political/Kisan news. 
+    Context: Indian political/Kisan news, local events in regions like Uruwa Bazar, Uttar Pradesh, and Bihar. 
     Language: ${language}.
+    
+    If the selected language is Bhojpuri, ensure the explanation reflects authentic regional usage (mix of local dialect and standard Hindi/English terms where appropriate) to ensure clarity for rural audiences.
     
     CRITICAL FORMATTING:
     1. Start with a very brief intro.
@@ -79,7 +80,7 @@ export const checkFact = async (
     });
 
     if (!response.text) {
-      throw new Error("EMPTY_RESPONSE");
+      throw new Error("No response from verification engine.");
     }
 
     const result = JSON.parse(response.text);
@@ -98,14 +99,6 @@ export const checkFact = async (
     return finalResult;
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    
-    // Check for specific error that requires key re-selection
-    if (error.message?.includes("Requested entity was not found") || 
-        error.message?.includes("API key not valid") ||
-        error.status === 404 || error.status === 401) {
-      throw new Error("AUTH_REQUIRED");
-    }
-    
     throw error;
   }
 };

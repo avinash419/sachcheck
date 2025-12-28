@@ -52,29 +52,14 @@ const App: React.FC = () => {
     transcriptionRef.current = '';
   }, []);
 
-  const openKeySelection = async () => {
-    // @ts-ignore
-    if (window.aistudio) {
-      // @ts-ignore
-      await window.aistudio.openSelectKey();
-    }
-  };
-
   const startRecording = async () => {
     if (isRecording) return;
     setErrorMsg(null);
     transcriptionRef.current = '';
     
-    // Check if key is available
-    // @ts-ignore
-    if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
-      await openKeySelection();
-    }
-
     const apiKey = process.env.API_KEY;
     if (!apiKey) { 
-      setErrorMsg("Please select an API Key using the button below."); 
-      await openKeySelection();
+      setErrorMsg("Verification system is currently unavailable. (Missing configuration)"); 
       return; 
     }
 
@@ -104,7 +89,9 @@ const App: React.FC = () => {
             if (m.serverContent?.inputTranscription?.text) {
               const newText = m.serverContent.inputTranscription.text;
               setInputValue(prev => {
-                return (transcriptionRef.current + " " + newText).trim();
+                // Better delta handling: check if we're duplicating
+                const cleaned = (transcriptionRef.current + " " + newText).trim();
+                return cleaned;
               });
               transcriptionRef.current += " " + newText;
             }
@@ -119,7 +106,12 @@ const App: React.FC = () => {
         config: {
           responseModalities: [Modality.AUDIO],
           inputAudioTranscription: {},
-          systemInstruction: `You are a voice-to-text transcriber for a fact-checking app. Listen to the user in ${language} and provide high-accuracy transcription of their claim about Indian news or Kisan issues. Do not talk back unless necessary.`
+          systemInstruction: `You are an expert multilingual speech-to-text engine. 
+          The user is speaking in ${language}. 
+          Context: Indian local news, farming (Kisan), and community issues from regions like Uttar Pradesh (including Uruwa Bazar) and Bihar.
+          Task: Provide a verbatim, high-accuracy transcription of the user's spoken claim.
+          If the language is Bhojpuri, pay close attention to regional phonetic nuances and specific local vocabulary. 
+          Output ONLY the transcribed text. Do not provide commentary.`
         },
       });
       liveSessionRef.current = sessionPromise;
@@ -130,10 +122,10 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSendMessage = async () => {
+  const handleSendMessage = async (customText?: string) => {
     if (isRecording) stopRecording();
     
-    const text = inputValue.trim();
+    const text = (customText || inputValue).trim();
     if (!text && !selectedImage) return;
 
     const userMsg: Message = {
@@ -145,7 +137,7 @@ const App: React.FC = () => {
     };
 
     setMessages(prev => [...prev, userMsg]);
-    setInputValue('');
+    if (!customText) setInputValue('');
     setSelectedImage(null);
     setIsTyping(true);
     setErrorMsg(null);
@@ -161,16 +153,25 @@ const App: React.FC = () => {
       }]);
     } catch (error: any) {
       console.error("Fact check error:", error);
-      if (error.message === "AUTH_REQUIRED") {
-        setErrorMsg("Authentication failed. Please select a valid API Key.");
-        await openKeySelection();
-      } else {
-        setErrorMsg("Verification failed. Please check your network or try a different claim.");
-      }
-      // Remove the failed message or keep it? Let's keep it but show error.
+      setErrorMsg("Verification failed. Please check your network or try again later.");
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const handleQuickCheck = () => {
+    const today = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    let prompt = '';
+    
+    if (language === Language.ENGLISH) {
+      prompt = `Show me ONLY today's (${today}) latest news from Uruwa Bazar Daily Newz. Provide a summary of today's specific reports.`;
+    } else if (language === Language.BHOJPURI) {
+      prompt = `आज (${today}) के उरुवा बाज़ार डेली न्यूज़ के ताज़ा खबर बताईं। खाली आज के रिपोर्ट के सारांश दीं।`;
+    } else {
+      prompt = `आज (${today}) की उरुवा बाज़ार डेली न्यूज़ की ताज़ा खबरें दिखाएं। केवल आज की रिपोर्टों का सारांश दें।`;
+    }
+    
+    handleSendMessage(prompt);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,13 +227,19 @@ const App: React.FC = () => {
               <span>सत्यापन केंद्र</span>
             </button>
             <button 
-              onClick={openKeySelection}
-              className="flex items-center gap-4 w-full p-4 hover:bg-white/5 rounded-2xl text-left text-slate-500 font-bold transition-all group"
+              onClick={handleQuickCheck}
+              className="flex items-center gap-4 w-full p-4 bg-gradient-to-r from-blue-600/20 to-transparent hover:from-blue-600/30 rounded-2xl text-left border border-blue-500/10 shadow-xl font-bold transition-all group"
             >
-              <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center group-hover:bg-white/10">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+              <div className="w-8 h-8 rounded-lg bg-blue-500/30 flex items-center justify-center group-hover:bg-blue-500/50 transition-colors">
+                <svg className="w-5 h-5 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 2v4h4" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h4" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12h10" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16h10" /></svg>
               </div>
-              <span>API Key</span>
+              <span className="text-sm truncate">{UI_STRINGS.uruwaBazar[language]}</span>
+            </button>
+            <button className="flex items-center gap-4 w-full p-4 hover:bg-white/5 rounded-2xl text-left text-slate-500 font-bold transition-all group opacity-50 cursor-not-allowed">
+              <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <span>इतिहास</span>
             </button>
           </nav>
         </div>
@@ -353,7 +360,7 @@ const App: React.FC = () => {
                 value={inputValue} 
                 onChange={(e) => setInputValue(e.target.value)} 
                 onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} 
-                placeholder={isRecording ? "Listening to your voice..." : UI_STRINGS.placeholder[language]} 
+                placeholder={isRecording ? "Listening..." : UI_STRINGS.placeholder[language]} 
                 className="flex-1 py-4 text-xl text-slate-900 placeholder-slate-300 bg-transparent outline-none font-bold tracking-tight px-2" 
               />
               
