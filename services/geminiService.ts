@@ -23,7 +23,7 @@ export const checkFact = async (
   
   const systemInstruction = `
     You are a professional fact-checker for the Indian context. 
-    Focus: Indian political news,social media, Kisan (farming), and local events (Uruwa Bazar, Bihar, UP). 
+    Focus: Indian political news, social media, Kisan (farming), and local events (Uruwa Bazar, Bihar, UP). 
     Language: ${language}.
     
     GUIDELINES:
@@ -46,13 +46,14 @@ export const checkFact = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-flash-preview', // Switched to Flash to avoid 'limit: 0' quota issues on Pro
       contents: { parts: contents },
       config: {
         systemInstruction,
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
-        // Remove thinkingBudget for faster, more reliable calls during debugging
+        // Flash-preview supports thinking. Setting a modest budget for reasoning.
+        thinkingConfig: { thinkingBudget: 2000 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
