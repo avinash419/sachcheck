@@ -171,16 +171,17 @@ const App: React.FC = () => {
       console.error("Verification error details:", error);
       const errString = error?.message?.toLowerCase() || "";
       
-      // If auth failure or model not found, always prompt for a key
       if (
         errString.includes("not found") || 
         errString.includes("key") || 
         errString.includes("401") || 
         errString.includes("403") ||
-        errString.includes("unauthorized")
+        errString.includes("unauthorized") ||
+        errString.includes("quota") ||
+        errString.includes("exhausted")
       ) {
         setIsKeyMissing(true);
-        setErrorMsg("API Key connection lost. Please connect your Gemini key again.");
+        setErrorMsg("API Key connection issue or limit reached. Please check your billing or connect a new key.");
       } else {
         setErrorMsg(`Error: ${error?.message || "Something went wrong. Please check your internet."}`);
       }
@@ -243,17 +244,17 @@ const App: React.FC = () => {
               <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
             </div>
             <div className="space-y-3">
-              <h3 className="text-3xl font-black text-slate-900 tracking-tighter">Connect Your Account</h3>
+              <h3 className="text-3xl font-black text-slate-900 tracking-tighter">Connection Required</h3>
               <p className="text-slate-500 font-medium leading-relaxed">
-                To start fact-checking, please connect your Gemini API key. If you are on Netlify, this is required for the app to function.
-                <br /><a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-blue-600 underline text-sm mt-2 inline-block font-bold">Billing Documentation</a>
+                We've encountered a limit or authentication error. Please connect a valid Gemini API key to continue fact-checking.
+                <br /><a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-blue-600 underline text-sm mt-2 inline-block font-bold">Check API Quotas</a>
               </p>
             </div>
             <button 
               onClick={handleOpenKeyDialog}
               className="w-full py-6 bg-blue-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-500/30 transition-all hover:scale-[1.02] active:scale-95"
             >
-              Set API Key Now
+              Update API Key
             </button>
           </div>
         </div>
@@ -300,9 +301,9 @@ const App: React.FC = () => {
           <div className="hidden md:flex flex-col">
             <h2 className="text-xl font-black text-slate-900 tracking-tighter">{UI_STRINGS.tagline[language]}</h2>
             <div className="flex items-center gap-2 uppercase font-black text-[10px] tracking-[0.3em] text-slate-400">
-              <span className="text-blue-600">PRO-ENGINE</span>
+              <span className="text-blue-600">SMART-ENGINE</span>
               <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-              <span>GEMINI 3.0</span>
+              <span>FLASH 3.0</span>
             </div>
           </div>
           <div className="flex bg-slate-100 p-1.5 rounded-2xl shadow-inner border border-slate-200/50">

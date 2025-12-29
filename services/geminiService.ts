@@ -46,14 +46,12 @@ export const checkFact = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview', // Switched to Flash to avoid 'limit: 0' quota issues on Pro
+      model: 'gemini-3-flash-preview', // Switched to Flash tier to resolve quota limits
       contents: { parts: contents },
       config: {
         systemInstruction,
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
-        // Flash-preview supports thinking. Setting a modest budget for reasoning.
-        thinkingConfig: { thinkingBudget: 2000 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -111,12 +109,15 @@ export const generateSpeech = async (text: string): Promise<string> => {
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' },
+          },
         },
       },
     });
     return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '';
   } catch (e) {
+    console.error("TTS Error:", e);
     return '';
   }
 };
