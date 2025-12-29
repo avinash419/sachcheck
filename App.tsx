@@ -28,13 +28,18 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Check for API Key on mount
+  // Proactive API Key check for deployed environments
   useEffect(() => {
     const checkApiKey = async () => {
-      const hasEnvKey = !!process.env.API_KEY;
+      // Check both process.env and aistudio context
+      const hasEnvKey = !!process.env.API_KEY && process.env.API_KEY.length > 5;
       if (!hasEnvKey && window.aistudio) {
-        const selected = await window.aistudio.hasSelectedApiKey();
-        if (!selected) {
+        try {
+          const selected = await window.aistudio.hasSelectedApiKey();
+          if (!selected) {
+            setIsKeyMissing(true);
+          }
+        } catch (e) {
           setIsKeyMissing(true);
         }
       }
@@ -46,7 +51,6 @@ const App: React.FC = () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
       setIsKeyMissing(false);
-      // Attempt to refresh key availability
       setErrorMsg(null);
     }
   };
@@ -81,9 +85,10 @@ const App: React.FC = () => {
     setErrorMsg(null);
     transcriptionRef.current = '';
     
+    // Check key before starting
     const apiKey = process.env.API_KEY;
     if (!apiKey && !window.aistudio) { 
-      setErrorMsg("Verification system configuration missing. Please set your API Key."); 
+      setIsKeyMissing(true);
       return; 
     }
 
@@ -92,6 +97,8 @@ const App: React.FC = () => {
       streamRef.current = stream;
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
+      
+      // Re-instance to get potential new key from window.aistudio
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
       
       const sessionPromise = ai.live.connect({
@@ -112,16 +119,13 @@ const App: React.FC = () => {
           onmessage: (m: LiveServerMessage) => {
             if (m.serverContent?.inputTranscription?.text) {
               const newText = m.serverContent.inputTranscription.text;
-              setInputValue(prev => {
-                const cleaned = (transcriptionRef.current + " " + newText).trim();
-                return cleaned;
-              });
+              setInputValue(prev => (transcriptionRef.current + " " + newText).trim());
               transcriptionRef.current += " " + newText;
             }
           },
           onerror: (e) => { 
             console.error("Live session error", e);
-            setErrorMsg("Voice connection failed. Check your network."); 
+            setErrorMsg("Voice connection failed. Reconnecting..."); 
             stopRecording(); 
           },
           onclose: () => setIsRecording(false),
@@ -129,16 +133,13 @@ const App: React.FC = () => {
         config: {
           responseModalities: [Modality.AUDIO],
           inputAudioTranscription: {},
-          systemInstruction: `You are an expert multilingual speech-to-text engine. 
-          The user is speaking in ${language}. 
-          Context: Indian local news, farming (Kisan), and community issues.
-          Task: Provide a verbatim transcription. Output ONLY the text.`
+          systemInstruction: `You are an expert transcription engine for ${language}. Verbatim text output only.`
         },
       });
       liveSessionRef.current = sessionPromise;
     } catch (err) { 
       console.error("Mic access failed", err);
-      setErrorMsg("Could not access microphone. Please check permissions."); 
+      setErrorMsg("Please enable microphone permissions."); 
       stopRecording(); 
     }
   };
@@ -173,12 +174,21 @@ const App: React.FC = () => {
         timestamp: new Date()
       }]);
     } catch (error: any) {
-      console.error("Fact check error:", error);
-      if (error?.message?.includes("Requested entity was not found") || error?.message?.includes("401") || error?.message?.includes("403")) {
-        setErrorMsg("API Key issue detected. Re-authentication required.");
+      console.error("Verification Error:", error);
+      const errorStr = error?.message || "";
+      
+      // Catch key related issues specifically
+      if (
+        errorStr.includes("Requested entity was not found") || 
+        errorStr.includes("API_KEY_INVALID") ||
+        errorStr.includes("401") || 
+        errorStr.includes("403") ||
+        errorStr.includes("API key not valid")
+      ) {
         setIsKeyMissing(true);
+        setErrorMsg("Your API connection is invalid or expired. Please connect a new key.");
       } else {
-        setErrorMsg("Verification failed. Please check your network or API Key settings.");
+        setErrorMsg("The system is busy or offline. Please check your network and try again.");
       }
     } finally {
       setIsTyping(false);
@@ -190,11 +200,11 @@ const App: React.FC = () => {
     let prompt = '';
     
     if (language === Language.ENGLISH) {
-      prompt = `Show me ONLY today's (${today}) latest news from Uruwa Bazar Daily Newz. Provide a summary of today's specific reports.`;
+      prompt = `Show me ONLY today's (${today}) latest news from Uruwa Bazar Daily Newz.`;
     } else if (language === Language.BHOJPURI) {
-      prompt = `आज (${today}) के उरुवा बाज़ार डेली न्यूज़ के ताज़ा खबर बताईं। खाली आज के रिपोर्ट के सारांश दीं।`;
+      prompt = `आज (${today}) के उरुवा बाज़ार डेली न्यूज़ के ताज़ा खबर बताईं।`;
     } else {
-      prompt = `आज (${today}) की उरुवा बाज़ार डेली न्यूज़ की ताज़ा खबरें दिखाएं। केवल आज की रिपोर्टों का सारांश दें।`;
+      prompt = `आज (${today}) की उरुवा बाज़ार डेली न्यूज़ की ताज़ा खबरें दिखाएं।`;
     }
     
     handleSendMessage(prompt);
@@ -236,7 +246,7 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-[#f8fafc] overflow-hidden">
-      {/* API Key Modal Overlay */}
+      {/* Dynamic API Key Required Overlay */}
       {isKeyMissing && (
         <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300">
           <div className="bg-white rounded-[3rem] max-w-lg w-full p-12 shadow-2xl text-center space-y-8 transform transition-all animate-in zoom-in-95 duration-500">
@@ -244,17 +254,17 @@ const App: React.FC = () => {
               <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
             </div>
             <div className="space-y-3">
-              <h3 className="text-3xl font-black text-slate-900 tracking-tighter">Connection Required</h3>
+              <h3 className="text-3xl font-black text-slate-900 tracking-tighter">API Connection Error</h3>
               <p className="text-slate-500 font-medium leading-relaxed">
-                To enable real-time fact-checking and news retrieval, please connect your Google Gemini API key. 
-                <br /><a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-blue-600 underline text-sm mt-2 inline-block">Learn more about billing</a>
+                We couldn't find a valid verification key in your deployment. Please connect your Google Gemini API key to proceed.
+                <br /><a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-blue-600 underline text-sm mt-2 inline-block">Check Billing & Documentation</a>
               </p>
             </div>
             <button 
               onClick={handleOpenKeyDialog}
               className="w-full py-6 bg-blue-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-500/30 transition-all hover:scale-[1.02] active:scale-95"
             >
-              Connect API Key
+              Connect API Key Now
             </button>
           </div>
         </div>
@@ -311,9 +321,9 @@ const App: React.FC = () => {
           <div className="hidden md:flex flex-col">
             <h2 className="text-xl font-black text-slate-900 tracking-tighter">{UI_STRINGS.tagline[language]}</h2>
             <div className="flex items-center gap-2 uppercase font-black text-[10px] tracking-[0.3em]">
-              <span className="text-blue-600">NATIVE-MODALITY</span>
+              <span className="text-blue-600">PRO-VERIFICATION</span>
               <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-              <span className="text-slate-400">SESSION v5.0</span>
+              <span className="text-slate-400">GEMINI-3 PRO</span>
             </div>
           </div>
           <div className="flex bg-slate-100 p-1.5 rounded-2xl shadow-inner border border-slate-200/50">

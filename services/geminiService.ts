@@ -15,22 +15,25 @@ export const checkFact = async (
     return resultCache.get(cacheKey)!;
   }
 
+  // Always use the latest API key from process.env
   const apiKey = process.env.API_KEY || "";
   const ai = new GoogleGenAI({ apiKey });
   
   const systemInstruction = `
-    Professional fact-checker for Indian context. 
-    Context: Indian political/Kisan news, local events in regions like Uruwa Bazar, Uttar Pradesh, and Bihar. 
+    You are a professional, high-accuracy fact-checker for the Indian context. 
+    Focus: Indian political news, social media claims, Kisan (farming) issues, and local events (e.g., Uruwa Bazar, UP, Bihar). 
     Language: ${language}.
     
-    If the selected language is Bhojpuri, ensure the explanation reflects authentic regional usage (mix of local dialect and standard Hindi/English terms where appropriate) to ensure clarity for rural audiences.
+    GUIDELINES:
+    1. If Bhojpuri is selected, use authentic regional phrasing mixed with common terms for clarity.
+    2. Be objective and provide clear evidence.
+    3. Use Google Search to find the latest reports and official statements.
     
     CRITICAL FORMATTING:
-    1. Start with a very brief intro.
-    2. Provide news points as clear, SEPARATE bullet points using the '•' symbol. 
-    3. Each news point MUST be on its own new line.
-    4. Use bolding **Example** for key entities.
-    5. No wall of text. Clear separation between "News 1", "News 2", etc.
+    - Start with a 1-sentence summary intro.
+    - Provide exactly 3-4 clear bullet points using '•'.
+    - Use bolding **Example** for dates, people, and locations.
+    - Each bullet must be on a new line.
     
     Return JSON: {verdict: "True"|"False"|"Misleading", explanation: "...", sources: [{title: "...", uri: "..."}]}
   `;
@@ -47,13 +50,14 @@ export const checkFact = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-pro-preview', // Upgraded for complex reasoning
       contents: { parts: contents },
       config: {
         systemInstruction,
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 0 },
+        // Reserve budget for reasoning before final output
+        thinkingConfig: { thinkingBudget: 4000 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -76,25 +80,26 @@ export const checkFact = async (
     });
 
     if (!response.text) {
-      throw new Error("No response from verification engine.");
+      throw new Error("Empty response from AI engine.");
     }
 
     const result = JSON.parse(response.text);
+    // Extract search grounding if available
     const searchSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map(chunk => ({
-      title: chunk.web?.title || 'Source',
+      title: chunk.web?.title || 'Verified Source',
       uri: chunk.web?.uri || '#'
     })) || [];
 
     const finalResult: FactCheckResult = {
       verdict: (result.verdict as Verdict) || 'Unverified',
-      explanation: result.explanation || 'Verification failed.',
-      sources: result.sources?.length ? result.sources : searchSources.slice(0, 3)
+      explanation: result.explanation || 'No detailed explanation available.',
+      sources: (result.sources && result.sources.length > 0) ? result.sources : searchSources.slice(0, 3)
     };
 
     resultCache.set(cacheKey, finalResult);
     return finalResult;
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
+    console.error("Fact Check Service Error:", error);
     throw error;
   }
 };
@@ -107,7 +112,7 @@ export const generateSpeech = async (text: string): Promise<string> => {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Read: ${cleanText}` }] }],
+      contents: [{ parts: [{ text: `Read this clearly and naturally: ${cleanText}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
