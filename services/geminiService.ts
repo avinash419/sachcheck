@@ -15,27 +15,23 @@ export const checkFact = async (
     return resultCache.get(cacheKey)!;
   }
 
-  // Always use the latest API key from process.env
+  // Always re-instance right before use to ensure latest key is used
   const apiKey = process.env.API_KEY || "";
+  if (!apiKey) throw new Error("API Key is missing. Please connect your key via the dialog.");
+  
   const ai = new GoogleGenAI({ apiKey });
   
   const systemInstruction = `
-    You are a professional, high-accuracy fact-checker for the Indian context. 
-    Focus: Indian political news, social media claims, Kisan (farming) issues, and local events (e.g., Uruwa Bazar, UP, Bihar). 
+    You are a professional fact-checker for the Indian context. 
+    Focus: Indian political news,social media, Kisan (farming), and local events (Uruwa Bazar, Bihar, UP). 
     Language: ${language}.
     
     GUIDELINES:
-    1. If Bhojpuri is selected, use authentic regional phrasing mixed with common terms for clarity.
-    2. Be objective and provide clear evidence.
-    3. Use Google Search to find the latest reports and official statements.
+    1. Provide exactly 3 clear bullet points using '•'.
+    2. Use bolding **Example** for key facts.
+    3. Be neutral and objective.
     
-    CRITICAL FORMATTING:
-    - Start with a 1-sentence summary intro.
-    - Provide exactly 3-4 clear bullet points using '•'.
-    - Use bolding **Example** for dates, people, and locations.
-    - Each bullet must be on a new line.
-    
-    Return JSON: {verdict: "True"|"False"|"Misleading", explanation: "...", sources: [{title: "...", uri: "..."}]}
+    Return JSON ONLY: {verdict: "True"|"False"|"Misleading", explanation: "...", sources: [{title: "...", uri: "..."}]}
   `;
 
   const contents: any[] = [{ text: query }];
@@ -50,14 +46,13 @@ export const checkFact = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview', // Upgraded for complex reasoning
+      model: 'gemini-3-pro-preview',
       contents: { parts: contents },
       config: {
         systemInstruction,
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
-        // Reserve budget for reasoning before final output
-        thinkingConfig: { thinkingBudget: 4000 },
+        // Remove thinkingBudget for faster, more reliable calls during debugging
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -80,26 +75,25 @@ export const checkFact = async (
     });
 
     if (!response.text) {
-      throw new Error("Empty response from AI engine.");
+      throw new Error("The AI returned an empty response.");
     }
 
     const result = JSON.parse(response.text);
-    // Extract search grounding if available
     const searchSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks?.map(chunk => ({
-      title: chunk.web?.title || 'Verified Source',
+      title: chunk.web?.title || 'Source',
       uri: chunk.web?.uri || '#'
     })) || [];
 
     const finalResult: FactCheckResult = {
       verdict: (result.verdict as Verdict) || 'Unverified',
-      explanation: result.explanation || 'No detailed explanation available.',
+      explanation: result.explanation || 'Verification completed.',
       sources: (result.sources && result.sources.length > 0) ? result.sources : searchSources.slice(0, 3)
     };
 
     resultCache.set(cacheKey, finalResult);
     return finalResult;
   } catch (error: any) {
-    console.error("Fact Check Service Error:", error);
+    console.error("Gemini API Error:", error);
     throw error;
   }
 };
@@ -112,7 +106,7 @@ export const generateSpeech = async (text: string): Promise<string> => {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: `Read this clearly and naturally: ${cleanText}` }] }],
+      contents: [{ parts: [{ text: `Speak: ${cleanText}` }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {

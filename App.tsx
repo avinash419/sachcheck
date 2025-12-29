@@ -28,12 +28,12 @@ const App: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Proactive API Key check for deployed environments
   useEffect(() => {
     const checkApiKey = async () => {
-      // Check both process.env and aistudio context
-      const hasEnvKey = !!process.env.API_KEY && process.env.API_KEY.length > 5;
-      if (!hasEnvKey && window.aistudio) {
+      const currentKey = process.env.API_KEY;
+      const hasValidKey = !!currentKey && currentKey.length > 5;
+      
+      if (!hasValidKey && window.aistudio) {
         try {
           const selected = await window.aistudio.hasSelectedApiKey();
           if (!selected) {
@@ -85,9 +85,7 @@ const App: React.FC = () => {
     setErrorMsg(null);
     transcriptionRef.current = '';
     
-    // Check key before starting
-    const apiKey = process.env.API_KEY;
-    if (!apiKey && !window.aistudio) { 
+    if (!process.env.API_KEY && !window.aistudio) { 
       setIsKeyMissing(true);
       return; 
     }
@@ -98,7 +96,6 @@ const App: React.FC = () => {
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
       
-      // Re-instance to get potential new key from window.aistudio
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
       
       const sessionPromise = ai.live.connect({
@@ -125,7 +122,6 @@ const App: React.FC = () => {
           },
           onerror: (e) => { 
             console.error("Live session error", e);
-            setErrorMsg("Voice connection failed. Reconnecting..."); 
             stopRecording(); 
           },
           onclose: () => setIsRecording(false),
@@ -133,13 +129,11 @@ const App: React.FC = () => {
         config: {
           responseModalities: [Modality.AUDIO],
           inputAudioTranscription: {},
-          systemInstruction: `You are an expert transcription engine for ${language}. Verbatim text output only.`
         },
       });
       liveSessionRef.current = sessionPromise;
     } catch (err) { 
-      console.error("Mic access failed", err);
-      setErrorMsg("Please enable microphone permissions."); 
+      setErrorMsg("Microphone access is required for voice search."); 
       stopRecording(); 
     }
   };
@@ -174,21 +168,21 @@ const App: React.FC = () => {
         timestamp: new Date()
       }]);
     } catch (error: any) {
-      console.error("Verification Error:", error);
-      const errorStr = error?.message || "";
+      console.error("Verification error details:", error);
+      const errString = error?.message?.toLowerCase() || "";
       
-      // Catch key related issues specifically
+      // If auth failure or model not found, always prompt for a key
       if (
-        errorStr.includes("Requested entity was not found") || 
-        errorStr.includes("API_KEY_INVALID") ||
-        errorStr.includes("401") || 
-        errorStr.includes("403") ||
-        errorStr.includes("API key not valid")
+        errString.includes("not found") || 
+        errString.includes("key") || 
+        errString.includes("401") || 
+        errString.includes("403") ||
+        errString.includes("unauthorized")
       ) {
         setIsKeyMissing(true);
-        setErrorMsg("Your API connection is invalid or expired. Please connect a new key.");
+        setErrorMsg("API Key connection lost. Please connect your Gemini key again.");
       } else {
-        setErrorMsg("The system is busy or offline. Please check your network and try again.");
+        setErrorMsg(`Error: ${error?.message || "Something went wrong. Please check your internet."}`);
       }
     } finally {
       setIsTyping(false);
@@ -197,15 +191,11 @@ const App: React.FC = () => {
 
   const handleQuickCheck = () => {
     const today = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
-    let prompt = '';
-    
-    if (language === Language.ENGLISH) {
-      prompt = `Show me ONLY today's (${today}) latest news from Uruwa Bazar Daily Newz.`;
-    } else if (language === Language.BHOJPURI) {
-      prompt = `आज (${today}) के उरुवा बाज़ार डेली न्यूज़ के ताज़ा खबर बताईं।`;
-    } else {
-      prompt = `आज (${today}) की उरुवा बाज़ार डेली न्यूज़ की ताज़ा खबरें दिखाएं।`;
-    }
+    let prompt = language === Language.ENGLISH 
+      ? `Today's (${today}) latest news from Uruwa Bazar Daily Newz.` 
+      : language === Language.BHOJPURI 
+      ? `आज (${today}) के उरुवा बाज़ार डेली न्यूज़ के ताज़ा खबर बताईं।`
+      : `आज (${today}) की उरुवा बाज़ार डेली न्यूज़ की ताज़ा खबरें दिखाएं।`;
     
     handleSendMessage(prompt);
   };
@@ -246,25 +236,24 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-[#f8fafc] overflow-hidden">
-      {/* Dynamic API Key Required Overlay */}
       {isKeyMissing && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[100] bg-slate-900/95 backdrop-blur-2xl flex items-center justify-center p-6 animate-in fade-in duration-300">
           <div className="bg-white rounded-[3rem] max-w-lg w-full p-12 shadow-2xl text-center space-y-8 transform transition-all animate-in zoom-in-95 duration-500">
             <div className="w-24 h-24 bg-blue-50 rounded-full flex items-center justify-center mx-auto text-blue-600 shadow-inner">
               <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
             </div>
             <div className="space-y-3">
-              <h3 className="text-3xl font-black text-slate-900 tracking-tighter">API Connection Error</h3>
+              <h3 className="text-3xl font-black text-slate-900 tracking-tighter">Connect Your Account</h3>
               <p className="text-slate-500 font-medium leading-relaxed">
-                We couldn't find a valid verification key in your deployment. Please connect your Google Gemini API key to proceed.
-                <br /><a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-blue-600 underline text-sm mt-2 inline-block">Check Billing & Documentation</a>
+                To start fact-checking, please connect your Gemini API key. If you are on Netlify, this is required for the app to function.
+                <br /><a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="text-blue-600 underline text-sm mt-2 inline-block font-bold">Billing Documentation</a>
               </p>
             </div>
             <button 
               onClick={handleOpenKeyDialog}
               className="w-full py-6 bg-blue-600 text-white rounded-3xl font-black uppercase tracking-widest hover:bg-blue-700 shadow-xl shadow-blue-500/30 transition-all hover:scale-[1.02] active:scale-95"
             >
-              Connect API Key Now
+              Set API Key Now
             </button>
           </div>
         </div>
@@ -273,7 +262,7 @@ const App: React.FC = () => {
       <aside className="hidden md:flex flex-col w-72 bg-[#0a0a1a] text-white p-8 justify-between border-r border-white/5 shadow-2xl z-20">
         <div className="space-y-10">
           <div className="flex items-center gap-4 group cursor-pointer">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg shadow-blue-500/20 group-hover:scale-110 transition-transform">S</div>
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl flex items-center justify-center font-black text-2xl shadow-lg group-hover:scale-110 transition-transform">S</div>
             <div>
               <h1 className="text-2xl font-black tracking-tighter leading-none">{UI_STRINGS.appName[language]}</h1>
               <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest opacity-60">SachCheck Hub</span>
@@ -286,28 +275,18 @@ const App: React.FC = () => {
               </div>
               <span>सत्यापन केंद्र</span>
             </button>
-            <button 
-              onClick={handleQuickCheck}
-              className="flex items-center gap-4 w-full p-4 bg-gradient-to-r from-blue-600/20 to-transparent hover:from-blue-600/30 rounded-2xl text-left border border-blue-500/10 shadow-xl font-bold transition-all group"
-            >
+            <button onClick={handleQuickCheck} className="flex items-center gap-4 w-full p-4 bg-gradient-to-r from-blue-600/20 to-transparent hover:from-blue-600/30 rounded-2xl text-left border border-blue-500/10 shadow-xl font-bold transition-all group">
               <div className="w-8 h-8 rounded-lg bg-blue-500/30 flex items-center justify-center group-hover:bg-blue-500/50 transition-colors">
-                <svg className="w-5 h-5 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 2v4h4" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h4" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12h10" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16h10" /></svg>
+                <svg className="w-5 h-5 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10l4 4v10a2 2 0 01-2 2z" /></svg>
               </div>
               <span className="text-sm truncate">{UI_STRINGS.uruwaBazar[language]}</span>
             </button>
           </nav>
         </div>
         <div className="space-y-6">
-          <div className="bg-gradient-to-br from-blue-600/10 to-indigo-600/10 p-6 rounded-3xl border border-blue-500/20 backdrop-blur-sm">
+          <div className="bg-gradient-to-br from-blue-600/10 to-indigo-600/10 p-6 rounded-3xl border border-blue-500/20 backdrop-blur-sm text-center">
             <div className="text-3xl font-black text-blue-400 tracking-tighter">99.9%</div>
             <div className="text-[10px] text-blue-200/40 uppercase font-black tracking-[0.2em] mt-1">{UI_STRINGS.accuracyLabel[language]}</div>
-          </div>
-          <div className="flex items-center gap-3 px-2 py-1 text-[11px] text-emerald-400 font-black uppercase tracking-[0.25em]">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]"></span>
-            </span>
-            {UI_STRINGS.activeLabel[language]}
           </div>
         </div>
       </aside>
@@ -315,24 +294,20 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col relative overflow-hidden bg-white">
         <header className="px-8 py-5 flex items-center justify-between border-b border-slate-50 bg-white/80 backdrop-blur-xl z-10">
           <div className="md:hidden flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-lg shadow-blue-500/10">S</div>
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center font-black text-lg text-white shadow-lg">S</div>
             <span className="font-black text-slate-900 tracking-tighter text-xl">{UI_STRINGS.appName[language]}</span>
           </div>
           <div className="hidden md:flex flex-col">
             <h2 className="text-xl font-black text-slate-900 tracking-tighter">{UI_STRINGS.tagline[language]}</h2>
-            <div className="flex items-center gap-2 uppercase font-black text-[10px] tracking-[0.3em]">
-              <span className="text-blue-600">PRO-VERIFICATION</span>
+            <div className="flex items-center gap-2 uppercase font-black text-[10px] tracking-[0.3em] text-slate-400">
+              <span className="text-blue-600">PRO-ENGINE</span>
               <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-              <span className="text-slate-400">GEMINI-3 PRO</span>
+              <span>GEMINI 3.0</span>
             </div>
           </div>
           <div className="flex bg-slate-100 p-1.5 rounded-2xl shadow-inner border border-slate-200/50">
             {Object.values(Language).map((lang) => (
-              <button 
-                key={lang} 
-                onClick={() => setLanguage(lang)} 
-                className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 ${language === lang ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-500 hover:text-slate-800'}`}
-              >
+              <button key={lang} onClick={() => setLanguage(lang)} className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300 ${language === lang ? 'bg-white text-slate-900 shadow-xl scale-105' : 'text-slate-500 hover:text-slate-800'}`}>
                 {lang}
               </button>
             ))}
@@ -360,52 +335,24 @@ const App: React.FC = () => {
 
         {errorMsg && (
           <div className="mx-8 md:mx-12 mb-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 shadow-sm">
-            <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            </div>
-            <span>{errorMsg}</span>
-            <button onClick={() => setErrorMsg(null)} className="ml-auto p-2 hover:bg-rose-100 rounded-lg transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg></button>
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <span className="flex-1">{errorMsg}</span>
+            <button onClick={() => setErrorMsg(null)} className="p-2 hover:bg-rose-100 rounded-lg transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg></button>
           </div>
         )}
 
         <footer className="p-6 md:p-12 pt-0 z-10">
           <div className="max-w-4xl mx-auto relative">
-            <div className={`bg-white rounded-[2.5rem] shadow-2xl border ${isRecording ? 'border-blue-400 ring-8 ring-blue-50' : 'border-slate-100 focus-within:border-blue-200 focus-within:ring-8 focus-within:ring-slate-50'} p-3 flex items-center gap-2 transition-all duration-500 group`}>
-              <button 
-                onClick={() => fileInputRef.current?.click()} 
-                className="p-5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all"
-                title="Upload Photo"
-              >
-                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
+            <div className={`bg-white rounded-[2.5rem] shadow-2xl border ${isRecording ? 'border-blue-400 ring-8 ring-blue-50' : 'border-slate-100 focus-within:border-blue-200 focus-within:ring-8 focus-within:ring-slate-50'} p-3 flex items-center gap-2 transition-all duration-500`}>
+              <button onClick={() => fileInputRef.current?.click()} className="p-5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all">
+                <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
               </button>
-              
-              <input 
-                type="text" 
-                value={inputValue} 
-                onChange={(e) => setInputValue(e.target.value)} 
-                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} 
-                placeholder={isRecording ? "Listening..." : UI_STRINGS.placeholder[language]} 
-                className="flex-1 py-4 text-xl text-slate-900 placeholder-slate-300 bg-transparent outline-none font-bold tracking-tight px-2" 
-              />
-              
+              <input type="text" value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder={UI_STRINGS.placeholder[language]} className="flex-1 py-4 text-xl text-slate-900 placeholder-slate-300 bg-transparent outline-none font-bold tracking-tight px-2" />
               <div className="flex items-center gap-2 pr-2">
-                <button 
-                  onClick={isRecording ? stopRecording : startRecording} 
-                  className={`p-5 rounded-full transition-all duration-500 ${isRecording ? 'bg-rose-500 text-white shadow-lg shadow-rose-200 scale-110' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'}`}
-                  title="Speak to Transcribe"
-                >
-                  <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
+                <button onClick={isRecording ? stopRecording : startRecording} className={`p-5 rounded-full transition-all duration-500 ${isRecording ? 'bg-rose-500 text-white shadow-lg scale-110' : 'text-slate-400 hover:text-blue-600 hover:bg-blue-50'}`}>
+                  <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
                 </button>
-                
-                <button 
-                  onClick={handleSendMessage} 
-                  disabled={isTyping || (!inputValue.trim() && !selectedImage)} 
-                  className={`px-10 py-5 rounded-full font-black uppercase text-sm tracking-[0.2em] transition-all duration-300 flex items-center gap-3 ${isTyping || (!inputValue.trim() && !selectedImage) ? 'bg-slate-100 text-slate-300 scale-95' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-xl shadow-blue-500/30 hover:shadow-2xl hover:scale-105 active:scale-95 active:shadow-inner'}`}
-                >
+                <button onClick={() => handleSendMessage()} disabled={isTyping || (!inputValue.trim() && !selectedImage)} className={`px-10 py-5 rounded-full font-black uppercase text-sm tracking-[0.2em] transition-all duration-300 flex items-center gap-3 ${isTyping || (!inputValue.trim() && !selectedImage) ? 'bg-slate-100 text-slate-300 scale-95' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-xl hover:scale-105 active:scale-95'}`}>
                   {UI_STRINGS.checkButton[language]}
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                 </button>

@@ -15,13 +15,8 @@
         }
     </style>
     <script>
-        // Use an object that respects existing process.env if build tools provided it
-        window.process = window.process || {};
-        window.process.env = window.process.env || {};
-        // Only set default if it's truly missing
-        if (!window.process.env.API_KEY) {
-            window.process.env.API_KEY = "";
-        }
+        // Ensure process object exists without overriding existing env vars
+        window.process = window.process || { env: {} };
     </script>
 <script type="importmap">
 {
@@ -36,7 +31,6 @@
 </head>
 <body class="bg-gray-50 text-slate-900">
     <div id="root"></div>
-    <!-- Entry point for the React application -->
     <script type="module" src="index.tsx"></script>
 </body>
 </html>
